@@ -10,6 +10,7 @@ const {
   convertToTitleCase,
   viewLocalFilePath,
   getToken,
+  removeLocalFilePath,
 } = require("../utils/common");
 const { emailRegex, phoneRegex } = require("../utils/constants");
 const {
@@ -80,7 +81,7 @@ const createUser = async (req, res) => {
       email,
       phoneNumber,
       defaultPassword: hashedPassword,
-      isActive: true,
+      isActive: false,
       fullName: convertToTitleCase(firstName + " " + lastName),
       userId: "UR" + Math.floor(Math.random() * 10000),
       password: "",
@@ -171,8 +172,9 @@ const findUser = async (req, res) => {
 //login
 const loginUser = async (req, res) => {
   try {
-    let { username, password } = req.body;
+    let { username, password } = req.headers;
 
+    console.log(username, password);
     const user = await userCollection.findOne({ email: username });
 
     if (user) {
@@ -191,6 +193,8 @@ const loginUser = async (req, res) => {
               token: token,
               loginCount: user.loginCount + 1,
               lastLogin: new Date(),
+              activeRole:
+                user.activeRole !== "" ? user.activeRole : user.roles[0]?.role,
             },
           }
         );
@@ -234,7 +238,6 @@ const getUsers = async (req, res) => {
     if (users) {
       const usersDetails = users?.map((user) => {
         delete user.password;
-        delete user.defaultPassword;
         return user;
       });
 
@@ -253,13 +256,17 @@ const getUsers = async (req, res) => {
 const deleteUser = async (req, res) => {
   try {
     let id = req.params.id;
+
     const user = await userCollection.findOne({ _id: new ObjectId(id) });
 
     if (user) {
-      if (process.env.LOCAL_UPLOAD === "true") {
-        fs.unlink(user?.userLogo?.url);
-      } else {
-        await removeOnCloudinary(user?.userLogo?.url);
+      if (user.userLogo?.url !== "") {
+        if (process.env.LOCAL_UPLOAD === "true") {
+          let localpath = removeLocalFilePath(user?.userLogo?.url)
+          fs.unlinkSync(localpath)
+        } else {
+          await removeOnCloudinary(user?.userLogo?.url);
+        }
       }
 
       const deletedUser = await userCollection.deleteOne({
@@ -287,12 +294,10 @@ const deleteUser = async (req, res) => {
 //updateUser
 const updateUser = async (req, res) => {
   try {
-    console.log(req.body);
-    const { firstName, lastName, email, password, phoneNumber, createdBy, id } =
-      req.body;
+    const { firstName, lastName, email, phoneNumber, createdBy, id } = req.body;
 
     if (
-      [firstName, lastName, email, password, phoneNumber, createdBy].some(
+      [firstName, lastName, email, phoneNumber, createdBy].some(
         (field) => !field || field?.trim() === ""
       )
     ) {
@@ -317,15 +322,19 @@ const updateUser = async (req, res) => {
           url: viewLocalFilePath(req),
           fileName: req.file.originalname,
         };
+        if (user?.userLogo?.url !== "") {
+          let localpath = removeLocalFilePath(user?.userLogo?.url);
+          fs.unlinkSync(localpath);
+        }
       } else if (req.file) {
+        user?.userLogo?.url !== "" &&
+          (await removeOnCloudinary(user?.userLogo?.url));
         const upload = await uploadOnCloudinary(req.file.path);
         image = {
           url: upload?.url,
           fileName: req.file.originalname,
         };
       }
-
-      const hashedPassword = await hashPassword(password);
 
       const updatedUser = await userCollection.updateOne(
         { _id: new ObjectId(id) },
@@ -335,7 +344,6 @@ const updateUser = async (req, res) => {
             lastName: lastName,
             fullName: convertToTitleCase(firstName + " " + lastName),
             email: email,
-            defaultPassword: hashedPassword,
             updatedBy: createdBy,
             phoneNumber: phoneNumber,
             updateAt: new Date(),
@@ -348,16 +356,58 @@ const updateUser = async (req, res) => {
         const user = await userCollection.findOne({ _id: new ObjectId(id) });
         delete user.password;
         delete user.defaultPassword;
-        apiResponse(res, 201, user);
+        return apiResponse(res, 201, user);
       } else {
-        apiError(res, 400, "DB fetch error");
+        return apiError(res, 400, "DB fetch error");
       }
     } else {
-      apiError(res, 400, "User not found");
+      return apiError(res, 400, "User not found");
     }
   } catch (error) {
     let errorMessage = error.message;
-    apiError(res, 500, errorMessage);
+    return apiError(res, 500, errorMessage);
+  }
+};
+
+const updateUserField = async (req, res) => {
+  try {
+    let body = req.body;
+    let id = req.body.id;
+
+    const user = await userCollection.findOne({ _id: new ObjectId(id) });
+
+    if (user) {
+      let updatedUser;
+      if (body.password) {
+        const hashedPassword = await hashPassword(body.password);
+        updatedUser = await userCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              defaultPassword: hashedPassword,
+            },
+          }
+        );
+      } else {
+        updatedUser = await userCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              isActive: body.isActive,
+            },
+          }
+        );
+      }
+
+      const user = await userCollection.findOne({ _id: new ObjectId(id) });
+      delete user.password;
+      delete user.defaultPassword;
+      return apiResponse(res, 201, user);
+    } else {
+      return apiError(res, 400, "User not found");
+    }
+  } catch (error) {
+    return apiError(res, 500, error.message);
   }
 };
 
@@ -370,4 +420,5 @@ module.exports = {
   getUserById,
   findUser,
   loginUser,
+  updateUserField,
 };

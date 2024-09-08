@@ -41,11 +41,21 @@ const viewLocalFilePath = (req) => {
   return `${req.protocol}://${req.get("host")}/api/view/${req.file.path}`;
 };
 
-const getToken = async(id, email) => {
+const removeLocalFilePath = (url) => {
+  const parsedUrl = new URL(url);
+  const prefix = "/api/view/";
+  let path = parsedUrl.pathname;
+  if (path.startsWith(prefix)) {
+    path = path.slice(prefix.length);
+  }
+  return path;
+};
+
+const getToken = async (id, email) => {
   return jwt.sign(
     {
       _id: id,
-      email: email
+      email: email,
     },
     process.env.TOKEN_SECRET,
     {
@@ -62,4 +72,5 @@ module.exports = {
   convertToTitleCase,
   viewLocalFilePath,
   getToken,
+  removeLocalFilePath,
 };
